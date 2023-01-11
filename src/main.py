@@ -1,18 +1,19 @@
 import logging
 import re
+from collections import Counter
 from urllib.parse import urljoin
 
 import requests_cache
 from bs4 import BeautifulSoup
-from dotenv import load_dotenv
 from tqdm import tqdm
 
 from configs import configure_argument_parser, configure_logging
-from constants import BASE_DIR, MAIN_DOC_URL
+from constants import (BASE_DIR, EXPECTED_STATUS, MAIN_DOC_URL, PEP_LIST_URL,
+                       PEP_MAX_LIMIT)
+from exceptions import (ParserFindAllVersionsException,
+                        ParserStatusAbbreviationException)
 from outputs import control_output
 from utils import find_tag, get_response
-
-load_dotenv()
 
 
 def whats_new(session):
@@ -27,7 +28,7 @@ def whats_new(session):
     div_with_ul = find_tag(main_div, 'div', class_='toctree-wrapper')
     sections_by_python = div_with_ul.find_all('li', class_='toctree-l1')
 
-    results = [('Ссылка на статью', 'Заголовок', 'Редактор, автор')]
+    results = [('Ссылка на статью', 'Заголовок', 'Редактор, Автор')]
     for section in tqdm(sections_by_python):
         version_a_tag = find_tag(section, 'a')
         href = version_a_tag['href']
@@ -56,11 +57,14 @@ def latest_versions(session):
     sidebar = find_tag(soup, 'div', class_='sphinxsidebarwrapper')
     ul_tags = sidebar.find_all('ul')
 
+    search_string = 'All versions'
     for ul in ul_tags:
-        if 'All versions' in ul.text:
+        if search_string in ul.text:
             a_tags = ul.find_all('a')
             break
-        raise Exception('Ничего не нашлось')
+        error_msg = f'Текст {ul.text} не содержит строку `{search_string}`'
+        logging.error(error_msg, stack_info=True)
+        raise ParserFindAllVersionsException(error_msg)
 
     results = [('Ссылка на документацию', 'Версия', 'Статус')]
     pattern = r'Python (?P<version>\d\.\d+) \((?P<status>.*)\)'
@@ -102,10 +106,73 @@ def download(session):
     logging.info(f'Архив был загружен и сохранён: {archive_path}')
 
 
+def pep(session):
+    response = get_response(session, PEP_LIST_URL)
+    if response is None:
+        return None
+
+    soup = BeautifulSoup(response.text, features='lxml')
+    index = find_tag(soup, 'section', id='numerical-index')
+    tbody = find_tag(index, 'tbody')
+
+    pattern = re.compile(r'^/pep-\d{4}')
+    pep_count = Counter()
+    missmatch_statuses = []
+    for row in tqdm(tbody.find_all('tr', limit=PEP_MAX_LIMIT)):
+        abbr = find_tag(row, 'abbr')
+        link = find_tag(row, 'a', href=pattern)
+        pep_url = urljoin(PEP_LIST_URL, link['href'])
+
+        pep_abbr = abbr.text[1:]
+        preview_status = EXPECTED_STATUS.get(pep_abbr)
+        if preview_status is None:
+            error_msg = f'Неизвестное обозначение PEP-статуса: {pep_abbr}'
+            logging.error(error_msg, stack_info=True)
+            raise ParserStatusAbbreviationException(error_msg)
+
+        response = get_response(session, pep_url)
+        if response is None:
+            continue
+
+        soup = BeautifulSoup(response.text, features='lxml')
+        status_dt = find_tag(
+            soup,
+            lambda tag: tag.name == 'dt' and tag.text == 'Status:'
+        )
+        status_dd = status_dt.find_next_sibling('dd')
+        pep_status = status_dd.text
+        pep_count.update((pep_status,))
+
+        if pep_status not in preview_status:
+            missmatch_statuses.append(
+                (pep_url, pep_status, preview_status)
+            )
+
+    if missmatch_statuses:
+        message = 'Несовпадающие статусы:'
+        for pep_url, pep_status, preview_status in missmatch_statuses:
+            message = '\n'.join((
+                message,
+                f'{pep_url}',
+                f'Статус в карточке: {pep_status}',
+                f'Ожидаемые статусы:: {preview_status}',
+            ))
+        logging.info(message)
+
+    results = [('Статус', 'Количество')]
+    total = 0
+    for status, count in pep_count.items():
+        results.append((status, count))
+        total += count
+    results.append(('Total', total))
+    return results
+
+
 MODE_TO_FUNCTION = {
     'whats-new': whats_new,
     'latest-versions': latest_versions,
     'download': download,
+    'pep': pep,
 }
 
 

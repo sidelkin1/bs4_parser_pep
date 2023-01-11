@@ -9,10 +9,10 @@ from constants import BASE_DIR, DATETIME_FORMAT
 
 def control_output(results, cli_args):
     output = cli_args.output
-    if output == 'pretty':
-        pretty_output(results)
-    elif output == 'file':
+    if output == 'file':
         file_output(results, cli_args)
+    elif output == 'pretty':
+        pretty_output(results)
     else:
         default_output(results)
 
