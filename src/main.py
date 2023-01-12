@@ -118,9 +118,11 @@ def pep(session):
     pattern = re.compile(r'^/pep-\d{4}')
     pep_count = Counter()
     missmatch_statuses = []
-    for row in tqdm(tbody.find_all('tr', limit=PEP_MAX_LIMIT)):
-        abbr = find_tag(row, 'abbr')
-        link = find_tag(row, 'a', href=pattern)
+    tr_tags = tbody.find_all('tr', limit=PEP_MAX_LIMIT)
+    total = len(tr_tags)
+    for tr in tqdm(tr_tags):
+        abbr = find_tag(tr, 'abbr')
+        link = find_tag(tr, 'a', href=pattern)
         pep_url = urljoin(PEP_LIST_URL, link['href'])
 
         pep_abbr = abbr.text[1:]
@@ -132,6 +134,7 @@ def pep(session):
 
         response = get_response(session, pep_url)
         if response is None:
+            total -= 1
             continue
 
         soup = BeautifulSoup(response.text, features='lxml')
@@ -149,21 +152,15 @@ def pep(session):
             )
 
     if missmatch_statuses:
-        message = 'Несовпадающие статусы:'
-        for pep_url, pep_status, preview_status in missmatch_statuses:
-            message = '\n'.join((
-                message,
-                f'{pep_url}',
-                f'Статус в карточке: {pep_status}',
-                f'Ожидаемые статусы:: {preview_status}',
-            ))
-        logging.info(message)
+        message = '\n'.join('\n'.join((
+            f'{pep_url}',
+            f'Статус в карточке: {pep_status}',
+            f'Ожидаемые статусы:: {preview_status}',
+        )) for pep_url, pep_status, preview_status in missmatch_statuses)
+        logging.info('\n'.join(('Несовпадающие статусы:', message)))
 
     results = [('Статус', 'Количество')]
-    total = 0
-    for status, count in pep_count.items():
-        results.append((status, count))
-        total += count
+    results.extend(pep_count.items())
     results.append(('Total', total))
     return results
 
