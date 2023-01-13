@@ -16,6 +16,9 @@ from outputs import control_output
 from utils import find_tag, get_response
 
 
+logger = logging.getLogger(__name__)
+
+
 def whats_new(session):
     whats_new_url = urljoin(MAIN_DOC_URL, 'whatsnew/')
     response = get_response(session, whats_new_url)
@@ -63,7 +66,7 @@ def latest_versions(session):
             a_tags = ul.find_all('a')
             break
         error_msg = f'Текст {ul.text} не содержит строку `{search_string}`'
-        logging.error(error_msg, stack_info=True)
+        logger.error(error_msg, stack_info=True)
         raise ParserFindAllVersionsException(error_msg)
 
     results = [('Ссылка на документацию', 'Версия', 'Статус')]
@@ -103,7 +106,7 @@ def download(session):
     response = session.get(archive_url)
     with open(archive_path, 'wb') as file:
         file.write(response.content)
-    logging.info(f'Архив был загружен и сохранён: {archive_path}')
+    logger.info(f'Архив был загружен и сохранён: {archive_path}')
 
 
 def pep(session):
@@ -114,12 +117,11 @@ def pep(session):
     soup = BeautifulSoup(response.text, features='lxml')
     index = find_tag(soup, 'section', id='numerical-index')
     tbody = find_tag(index, 'tbody')
+    tr_tags = tbody.find_all('tr', limit=PEP_MAX_LIMIT)
 
     pattern = re.compile(r'^/pep-\d{4}')
     pep_count = Counter()
     missmatch_statuses = []
-    tr_tags = tbody.find_all('tr', limit=PEP_MAX_LIMIT)
-    total = len(tr_tags)
     for tr in tqdm(tr_tags):
         abbr = find_tag(tr, 'abbr')
         link = find_tag(tr, 'a', href=pattern)
@@ -129,12 +131,11 @@ def pep(session):
         preview_status = EXPECTED_STATUS.get(pep_abbr)
         if preview_status is None:
             error_msg = f'Неизвестное обозначение PEP-статуса: {pep_abbr}'
-            logging.error(error_msg, stack_info=True)
+            logger.error(error_msg, stack_info=True)
             raise ParserStatusAbbreviationException(error_msg)
 
         response = get_response(session, pep_url)
         if response is None:
-            total -= 1
             continue
 
         soup = BeautifulSoup(response.text, features='lxml')
@@ -157,11 +158,11 @@ def pep(session):
             f'Статус в карточке: {pep_status}',
             f'Ожидаемые статусы:: {preview_status}',
         )) for pep_url, pep_status, preview_status in missmatch_statuses)
-        logging.info('\n'.join(('Несовпадающие статусы:', message)))
+        logger.info('\n'.join(('Несовпадающие статусы:', message)))
 
     results = [('Статус', 'Количество')]
     results.extend(pep_count.items())
-    results.append(('Total', total))
+    results.append(('Total', sum(pep_count.values())))
     return results
 
 
@@ -175,11 +176,11 @@ MODE_TO_FUNCTION = {
 
 def main():
     configure_logging()
-    logging.info('Парсер запущен!')
+    logger.info('Парсер запущен!')
 
     arg_parser = configure_argument_parser(MODE_TO_FUNCTION.keys())
     args = arg_parser.parse_args()
-    logging.info(f'Аргументы командной строки: {args}')
+    logger.info(f'Аргументы командной строки: {args}')
 
     session = requests_cache.CachedSession()
     if args.clear_cache:
@@ -190,7 +191,7 @@ def main():
 
     if results is not None:
         control_output(results, args)
-    logging.info('Парсер завершил работу.')
+    logger.info('Парсер завершил работу.')
 
 
 if __name__ == '__main__':
