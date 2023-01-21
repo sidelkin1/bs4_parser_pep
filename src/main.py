@@ -139,10 +139,7 @@ def pep(session):
             continue
 
         soup = BeautifulSoup(response.text, features='lxml')
-        status_dt = find_tag(
-            soup,
-            lambda tag: tag.name == 'dt' and tag.text == 'Status:'
-        )
+        status_dt = find_tag(soup, string='Status').find_parent('dt')
         status_dd = status_dt.find_next_sibling('dd')
         pep_status = status_dd.text
         pep_count.update((pep_status,))
